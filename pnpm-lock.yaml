@@ -210,6 +210,9 @@ importers:
       '@openrouter/sdk':
         specifier: ^0.12.79
         version: 0.12.79
+      openai:
+        specifier: ^6.39.1
+        version: 6.39.1(zod@4.4.3)
     devDependencies:
       '@types/node':
         specifier: ^25.9.1
@@ -395,6 +398,18 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
+  openai@6.39.1:
+    resolution: {integrity: sha512-z3dO9fEWOXBzlXynVb/xZ/tujzUjFWQWn3C0n0mw6Vo0zJTbEkaN4b2cLWjhJ6haJQx8LlREoafHRl+Gu/Hl+A==}
+    hasBin: true
+    peerDependencies:
+      ws: ^8.18.0
+      zod: ^3.25 || ^4.0
+    peerDependenciesMeta:
+      ws:
+        optional: true
+      zod:
+        optional: true
+
   tsx@4.22.3:
     resolution: {integrity: sha512-mdoNxBC/cSQObGGVQ5Bpn5i+yv7j68gk3Nfm3wFjcJg3Z0Mix9jzAFfP12prmm5eVGmDKtp0yyArrs0Q+8gZHg==}
     engines: {node: '>=18.0.0'}
@@ -530,6 +545,10 @@ snapshots:
 
   fsevents@2.3.3:
     optional: true
+
+  openai@6.39.1(zod@4.4.3):
+    optionalDependencies:
+      zod: 4.4.3
 
   tsx@4.22.3:
     dependencies:

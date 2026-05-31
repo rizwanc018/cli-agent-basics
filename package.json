@@ -23,6 +23,7 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "@openrouter/sdk": "^0.12.79"
+    "@openrouter/sdk": "^0.12.79",
+    "openai": "^6.39.1"
   }
 }
