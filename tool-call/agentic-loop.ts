@@ -5,7 +5,6 @@ import { readFileSync, readdirSync } from "fs";
 const prompt = process.argv[2];
 
 const client = new OpenRouter({ apiKey: process.env.OPENROUTER_API_KEY ?? "no-key" });
-
 const tools: ChatFunctionTool[] = [
     {
         type: "function",
