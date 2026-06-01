@@ -1,13 +1,12 @@
+import { OpenRouter } from "@openrouter/sdk";
+import type { ChatFunctionTool, ChatMessages } from "@openrouter/sdk/models";
 import { readFileSync, readdirSync } from "fs";
-import OpenAI from "openai";
 
 const prompt = process.argv[2];
 
-const apiKey = process.env.OPENROUTER_API_KEY;
-const baseURL = "https://openrouter.ai/api/v1";
-const client = new OpenAI({ apiKey: apiKey ?? "no-key", baseURL });
+const client = new OpenRouter({ apiKey: process.env.OPENROUTER_API_KEY ?? "no-key" });
 
-const tools: OpenAI.Chat.ChatCompletionTool[] = [
+const tools: ChatFunctionTool[] = [
     {
         type: "function",
         function: {
@@ -52,59 +51,63 @@ function readFile(path: string): string {
     }
 }
 
+function listDirectory(path: string): string {
+    try {
+        return readdirSync(path, { withFileTypes: true })
+            .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
+            .join("\n");
+    } catch (err) {
+        return `Error listing directory: ${(err as Error).message}`;
+    }
+}
+
 type ToolHandler = (args: Record<string, string>) => string;
 
 const TOOL_MAPPING: Record<string, ToolHandler> = {
-    list_directory: ({ path }) => {
-        try {
-            return readdirSync(path, { withFileTypes: true })
-                .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
-                .join("\n");
-        } catch (err) {
-            return `Error listing directory: ${(err as Error).message}`;
-        }
-    },
+    list_directory: ({ path }) => listDirectory(path),
     read_file: ({ path }) => readFile(path),
-    // write_file: ({ path, content }) => writeFile(path, content),
-    // edit_file: ({ path, old_string, new_string }) => editFile(path, old_string, new_string),
 };
 
-const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [{ role: "user", content: prompt }];
+const messages: ChatMessages[] = [{ role: "user", content: prompt }];
 
-let response = await client.chat.completions.create({
-    model: "openrouter/owl-alpha",
-    messages,
-    tools,
-    tool_choice: "auto",
+let response = await client.chat.send({
+    chatRequest: {
+        model: "openrouter/owl-alpha",
+        messages,
+        tools,
+        toolChoice: "auto",
+    },
 });
 
-while (response.choices[0].finish_reason === "tool_calls") {
-    messages.push(response.choices[0].message);
-    const toolCalls = response.choices[0].message.tool_calls;
+while (response.choices[0].finishReason === "tool_calls") {
+    const assistantMessage = response.choices[0].message;
+    messages.push(assistantMessage);
+
+    const toolCalls = assistantMessage.toolCalls;
 
     for (const toolCall of toolCalls ?? []) {
         if (toolCall.type !== "function") continue;
         const toolName = toolCall.function.name;
         const args = JSON.parse(toolCall.function.arguments) as Record<string, string>;
         const toolResponse = TOOL_MAPPING[toolName](args);
-        // const content = readFile(path);
 
         console.error(`[tool] ${toolName}("${args.path}")`);
 
         messages.push({
             role: "tool",
-            tool_call_id: toolCall.id,
+            toolCallId: toolCall.id,
             content: toolResponse,
         });
     }
 
-    response = await client.chat.completions.create({
-        model: "openrouter/owl-alpha",
-        messages,
-        tools,
-        tool_choice: "auto",
+    response = await client.chat.send({
+        chatRequest: {
+            model: "openrouter/owl-alpha",
+            messages,
+            tools,
+            toolChoice: "auto",
+        },
     });
 }
 
-// console.log(JSON.stringify(response.choices[0], null, 2));
 console.log(response.choices[0].message.content);
