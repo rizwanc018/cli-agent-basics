@@ -29,29 +29,72 @@ const callLLM = async (messages: ChatMessages[]): Promise<EventStream<ChatStream
     return stream;
 };
 
-const stream = await callLLM(messages);
-const reader = stream.getReader();
-let toolCalls = [];
-let fullContent = "";
-
 while (true) {
-    const { done, value: chunk } = await reader.read();
-    const content = chunk?.choices?.[0]?.delta?.content;
-    if (content) {
-        fullContent += content;
-        console.log(fullContent);
+    const stream = await callLLM(messages);
+    const reader = stream.getReader();
+
+    let fullContent = "";
+    const toolCallsMap: Record<number, { id: string; name: string; arguments: string }> = {};
+
+    while (true) {
+        const { done, value: chunk } = await reader.read();
+
+        if (done) break;
+
+        const delta = chunk?.choices?.[0]?.delta;
+
+        if (delta?.content) {
+            fullContent += delta.content;
+            process.stdout.write(delta.content);
+        }
+
+        for (const tc of delta?.toolCalls ?? []) {
+            if (!toolCallsMap[tc.index]) {
+                toolCallsMap[tc.index] = { id: tc.id ?? "", name: tc.function?.name ?? "", arguments: "" };
+            }
+            toolCallsMap[tc.index].arguments += tc.function?.arguments ?? "";
+        }
     }
 
-    console.log(JSON.stringify(chunk?.choices[0], null, 2));
-    console.log("\n<<<<<<<<>>>>>>>>>\n");
+    if (fullContent) process.stdout.write("\n");
 
-    if (done) {
-        break;
+    const toolCalls = Object.values(toolCallsMap);
+
+    messages.push({
+        role: "assistant",
+        content: fullContent || null,
+        toolCalls: toolCalls.map((tc) => ({
+            id: tc.id,
+            type: "function",
+            function: { name: tc.name, arguments: tc.arguments },
+        })),
+    });
+
+    if (toolCalls.length === 0) break;
+
+    let args: Record<string, string> = {};
+
+    for (const tc of toolCalls) {
+        const handler = TOOL_MAPPING[tc.name];
+        // const args = JSON.parse(tc.arguments) as Record<string, string>;
+        try {
+            args = JSON.parse(tc.arguments);
+        } catch {
+            messages.push({
+                role: "tool",
+                toolCallId: tc.id,
+                content: "Error: Invalid tool arguments",
+            });
+            continue;
+        }
+        const result = handler ? handler(args) : `Unknown tool: ${tc.name}`;
+
+        console.log(`\n[tool: ${tc.name}(${tc.arguments})]`);
+
+        messages.push({
+            role: "tool",
+            toolCallId: tc.id,
+            content: result,
+        });
     }
 }
-
-// const content = chunk.choices?.[0]?.delta?.content;
-// if (content) {
-//     fullContent += content;
-//     console.log(fullContent);
-// }
