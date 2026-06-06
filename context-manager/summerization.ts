@@ -22,8 +22,7 @@ const messages: ChatMessages[] = [{ role: "user", content: prompt }];
 const TOKEN_LIMIT = 80_000;
 const MESSAGES_TO_KEEP = 10;
 
-const estimateTokens = (msgs: ChatMessages[]): number =>
-    enc.encode(JSON.stringify(msgs)).length;
+const estimateTokens = (msgs: ChatMessages[]): number => enc.encode(JSON.stringify(msgs)).length;
 
 const collectStream = async (stream: EventStream<ChatStreamChunk>): Promise<string> => {
     const reader = stream.getReader();
@@ -139,7 +138,10 @@ while (true) {
         }
         const result = handler ? handler(args) : `Unknown tool: ${tc.name}`;
 
-        console.log(`\n[tool: ${tc.name}(${tc.arguments})]`);
+        console.log(`\n>>> [tool: ${tc.name}(${tc.arguments})]`);
+        console.log(`>>> [tool result start]<<<`);
+        console.log(`${result}`);
+        console.log(`>>> [tool result end]<<<`);
 
         messages.push({
             role: "tool",
