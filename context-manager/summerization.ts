@@ -1,3 +1,6 @@
+// Summarizing Long Documents
+// https://developers.openai.com/cookbook/examples/summarizing_long_documents?utm_source=chatgpt.com
+
 import { OpenRouter } from "@openrouter/sdk";
 import type { EventStream } from "@openrouter/sdk/lib/event-streams.js";
 import type { ChatMessages, ChatStreamChunk } from "@openrouter/sdk/models";
