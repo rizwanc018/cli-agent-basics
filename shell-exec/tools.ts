@@ -75,13 +75,42 @@ export function listDirectory(path: string): string {
 }
 
 export function executeShell(command: string) {
+    const WORKSPACE_DIR = process.cwd();
+
+    const DANGEROUS_PATTERNS = [
+        /(^|\s|\/)etc\b/,
+        /(^|\s|\/)root\b/,
+        /\.\.\//,
+        /~\//,
+        /\$HOME/,
+        /rm\s+(-\S+\s+)*\//,
+        /rm\s+(-\S*r\S*|-\S*f\S*)/i,
+        />\s*\/dev\/(sd|hd|nvme)/,
+        /mkfs/,
+        /dd\s+.*of=\/dev/,
+        /:(){:|:&};:/,
+    ];
+
+    if (DANGEROUS_PATTERNS.some((pattern) => pattern.test(command))) {
+        return `Error: command \`${command}\` contains a dangerous pattern`;
+    }
+
     try {
         return execSync(command, {
             encoding: "utf-8",
-            timeout: 10_000,
-            stdio: ["pipe", "pipe", "pipe"], 
+            timeout: 30_000,
+            stdio: ["pipe", "pipe", "pipe"],
+            killSignal: "SIGKILL",
+            cwd: WORKSPACE_DIR,
         });
     } catch (err: any) {
+        if (err.killed)
+            return `Error: command killed after 30s timeout (SIGKILL)\nPartial output: ${err.stdout || "(none)"}`;
         return `Error (exit ${err.status}):\n${err.stderr || err.message}`;
     }
 }
+
+//  test
+// console.log(executeShell("cat /etc/passwd"));
+// console.log(executeShell("ls"));
+// console.log(executeShell("cat ../../../etc/shadow"));
