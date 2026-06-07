@@ -87,8 +87,12 @@ export function executeShell(command: string) {
         /rm\s+(-\S*r\S*|-\S*f\S*)/i,
         />\s*\/dev\/(sd|hd|nvme)/,
         /mkfs/,
-        /dd\s+.*of=\/dev/,
         /:(){:|:&};:/,
+        /\bsudo\b/,
+        /\bshutdown\b/,
+        /\breboot\b/,
+        /\bmkfs\b/,
+        /\bdd\b/,
     ];
 
     if (DANGEROUS_PATTERNS.some((pattern) => pattern.test(command))) {
