@@ -79,8 +79,9 @@ export function executeShell(command: string) {
         return execSync(command, {
             encoding: "utf-8",
             timeout: 10_000,
+            stdio: ["pipe", "pipe", "pipe"], 
         });
-    } catch (error) {
-        return `Error: ${(error as Error).message}`;
+    } catch (err: any) {
+        return `Error (exit ${err.status}):\n${err.stderr || err.message}`;
     }
 }
