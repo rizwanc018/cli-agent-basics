@@ -1,6 +1,8 @@
 import { ChatFunctionTool } from "@openrouter/sdk/models";
 import { execSync } from "child_process";
-import { readFileSync, readdirSync, writeFileSync } from "fs";
+import { readFileSync, readdirSync, unlinkSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { createInterface } from "readline";
 
 function askApproval(command: string): Promise<boolean> {
@@ -59,7 +61,7 @@ export const tools: ChatFunctionTool[] = [
         type: "function",
         function: {
             name: "write_file",
-            description: "Write content to a file at the given path, creating it if it doesn't exist",
+            description: "Write content to a new file. Use only for creating files that do not yet exist.",
             parameters: {
                 type: "object",
                 properties: {
@@ -73,6 +75,27 @@ export const tools: ChatFunctionTool[] = [
                     },
                 },
                 required: ["path", "content"],
+            },
+        },
+    },
+    {
+        type: "function",
+        function: {
+            name: "edit_file",
+            description: "Edit an existing file by applying a unified diff patch. Always read the file first, then generate a minimal unified diff for the changes. Use this instead of write_file when the file already exists.",
+            parameters: {
+                type: "object",
+                properties: {
+                    path: {
+                        type: "string",
+                        description: "The path to the file being edited",
+                    },
+                    diff: {
+                        type: "string",
+                        description: "A unified diff in git format (--- a/path, +++ b/path, @@ hunks). Must be a valid patch applicable with `patch -p1`.",
+                    },
+                },
+                required: ["path", "diff"],
             },
         },
     },
@@ -119,6 +142,60 @@ export function listDirectory(path: string): string {
             .join("\n");
     } catch (err) {
         return `Error listing directory: ${(err as Error).message}`;
+    }
+}
+
+const RESET = "\x1b[0m";
+const RED = "\x1b[31m";
+const GREEN = "\x1b[32m";
+const CYAN = "\x1b[36m";
+
+function colorDiff(diff: string): string {
+    return diff
+        .split("\n")
+        .map((line) => {
+            if (line.startsWith("+++") || line.startsWith("---")) return CYAN + line + RESET;
+            if (line.startsWith("@@")) return CYAN + line + RESET;
+            if (line.startsWith("+")) return GREEN + line + RESET;
+            if (line.startsWith("-")) return RED + line + RESET;
+            return line;
+        })
+        .join("\n");
+}
+
+export async function editFile(path: string, diff: string): Promise<string> {
+    process.stderr.write(`\nProposed changes to ${path}:\n\n${colorDiff(diff)}\n`);
+
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    const approved = await new Promise<boolean>((resolve) => {
+        const ask = () => {
+            rl.question(`Apply patch to ${path}? [y/N] `, (answer) => {
+                if (answer.toLowerCase() === "y" || answer.toLowerCase() === "n" || answer === "") {
+                    rl.close();
+                    resolve(answer.toLowerCase() === "y");
+                } else {
+                    ask();
+                }
+            });
+        };
+        ask();
+    });
+
+    if (!approved) return `Aborted: user rejected changes to ${path}`;
+
+    const tmpFile = join(tmpdir(), `patch-${Date.now()}.diff`);
+    try {
+        writeFileSync(tmpFile, diff);
+        const result = execSync(`patch -p1 < "${tmpFile}"`, {
+            encoding: "utf-8",
+            cwd: process.cwd(),
+            stdio: ["pipe", "pipe", "pipe"],
+        });
+        return `Patch applied successfully to ${path}\n${result}`.trim();
+    } catch (err: any) {
+        return `Error applying patch: ${err.stderr || err.message}`;
+    } finally {
+        try { unlinkSync(tmpFile); } catch {}
     }
 }
 

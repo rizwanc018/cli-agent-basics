@@ -2,7 +2,7 @@ import { OpenRouter } from "@openrouter/sdk";
 import type { EventStream } from "@openrouter/sdk/lib/event-streams.js";
 import type { ChatMessages, ChatStreamChunk } from "@openrouter/sdk/models";
 import { getEncoding } from "js-tiktoken";
-import { executeShell, listDirectory, readFile, tools, writeFile } from "./tools.js";
+import { editFile, executeShell, listDirectory, readFile, tools, writeFile } from "./tools.js";
 
 const enc = getEncoding("cl100k_base");
 
@@ -16,10 +16,18 @@ const TOOL_MAPPING: Record<string, ToolHandler> = {
     list_directory: ({ path }) => listDirectory(path),
     read_file: ({ path }) => readFile(path),
     write_file: ({ path, content }) => writeFile(path, content),
+    edit_file: ({ path, diff }) => editFile(path, diff),
     execute_shell: ({ command }) => executeShell(command),
 };
 
-const messages: ChatMessages[] = [{ role: "user", content: prompt }];
+const messages: ChatMessages[] = [
+    {
+        role: "system",
+        content:
+            "When modifying an existing file: read it first, then call edit_file with a unified diff (git format: --- a/path, +++ b/path, @@ hunks). Only use write_file for creating new files that do not exist yet.",
+    },
+    { role: "user", content: prompt },
+];
 
 const TOKEN_LIMIT = 80_000;
 const MESSAGES_TO_KEEP = 10;
