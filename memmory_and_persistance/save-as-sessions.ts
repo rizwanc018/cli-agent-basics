@@ -1,20 +1,20 @@
-import { OpenRouter } from "@openrouter/sdk";
 import type { EventStream } from "@openrouter/sdk/lib/event-streams.js";
 import type { ChatMessages, ChatStreamChunk } from "@openrouter/sdk/models";
-import { getEncoding } from "js-tiktoken";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { basename, join } from "path";
 import { editFile, executeShell, listDirectory, readFile, tools, writeFile } from "./lib/tools.js";
+import { randomUUID } from "crypto";
+import { maybeCompress } from "./lib/summerize.js";
+import { OpenRouter } from "@openrouter/sdk";
 
-const enc = getEncoding("cl100k_base");
+export const client = new OpenRouter({ apiKey: process.env.OPENROUTER_API_KEY ?? "no-key" });
 
 const prompt = process.argv[2];
 
-const client = new OpenRouter({ apiKey: process.env.OPENROUTER_API_KEY ?? "no-key" });
-
+const UUID = randomUUID();
 const MESSAGES_DIR = join(homedir(), ".cli-agent-basics", basename(process.cwd()));
-const MESSAGES_FILE = join(MESSAGES_DIR, "messages.json");
+const MESSAGES_FILE = join(MESSAGES_DIR, `${UUID}.json`);
 mkdirSync(MESSAGES_DIR, { recursive: true });
 
 const loadMessages = (): ChatMessages[] => {
@@ -50,48 +50,6 @@ messages.push({ role: "user", content: prompt });
 const TOKEN_LIMIT = 80_000;
 const MESSAGES_TO_KEEP = 10;
 
-const estimateTokens = (msgs: ChatMessages[]): number => enc.encode(JSON.stringify(msgs)).length;
-
-const collectStream = async (stream: EventStream<ChatStreamChunk>): Promise<string> => {
-    const reader = stream.getReader();
-    let content = "";
-    while (true) {
-        const { done, value: chunk } = await reader.read();
-        if (done) break;
-        content += chunk?.choices?.[0]?.delta?.content ?? "";
-    }
-    return content;
-};
-
-const summarizeMessages = async (toSummarize: ChatMessages[]): Promise<ChatMessages> => {
-    const stream = await client.chat.send({
-        chatRequest: {
-            model: "openrouter/owl-alpha",
-            messages: [
-                {
-                    role: "user",
-                    content: `Summarize this conversation concisely, preserving all key facts, decisions, and context:\n\n${JSON.stringify(toSummarize)}`,
-                },
-            ],
-            stream: true,
-        },
-    });
-    const summary = await collectStream(stream);
-    return { role: "system", content: `Previous conversation summary:\n${summary}` };
-};
-
-const maybeCompress = async (msgs: ChatMessages[]): Promise<void> => {
-    if (estimateTokens(msgs) <= TOKEN_LIMIT) return;
-
-    console.error("\n[context: summarizing older messages…]");
-    const cutoff = msgs.length - MESSAGES_TO_KEEP;
-    const toSummarize = msgs.slice(0, cutoff);
-    const recent = msgs.slice(cutoff);
-    const summaryMsg = await summarizeMessages(toSummarize);
-    msgs.splice(0, msgs.length, summaryMsg, ...recent);
-    console.error(`[context: compressed to ~${estimateTokens(msgs).toLocaleString()} tokens]`);
-};
-
 const callLLM = async (messages: ChatMessages[]): Promise<EventStream<ChatStreamChunk>> => {
     const stream = await client.chat.send({
         chatRequest: {
@@ -106,7 +64,7 @@ const callLLM = async (messages: ChatMessages[]): Promise<EventStream<ChatStream
 };
 
 while (true) {
-    await maybeCompress(messages);
+    await maybeCompress(messages, TOKEN_LIMIT, MESSAGES_TO_KEEP, client);
     const stream = await callLLM(messages);
     const reader = stream.getReader();
 
