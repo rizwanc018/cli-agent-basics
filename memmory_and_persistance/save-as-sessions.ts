@@ -7,12 +7,23 @@ import { editFile, executeShell, listDirectory, readFile, tools, writeFile } fro
 import { randomUUID } from "crypto";
 import { maybeCompress } from "./lib/summerize.js";
 import { OpenRouter } from "@openrouter/sdk";
+import { TookCallsMap, ToolHandler } from "./lib/types.js";
 
 export const client = new OpenRouter({ apiKey: process.env.OPENROUTER_API_KEY ?? "no-key" });
 
-const prompt = process.argv[2];
+// const prompt = process.argv[2];
+console.log("process.argv : ", process.argv);
 
-const UUID = randomUUID();
+const args = process.argv.slice(2);
+
+const sessionFlagIndex = args.indexOf("--session");
+const sessionId = sessionFlagIndex !== -1 ? args[sessionFlagIndex + 1] : null;
+
+const prompt = sessionId
+    ? args.filter((_, i) => i !== sessionFlagIndex && i !== sessionFlagIndex + 1).join(" ")
+    : args.join(" ");
+
+const UUID = sessionId ?? randomUUID();
 const MESSAGES_DIR = join(homedir(), ".cli-agent-basics", basename(process.cwd()));
 const MESSAGES_FILE = join(MESSAGES_DIR, `${UUID}.json`);
 mkdirSync(MESSAGES_DIR, { recursive: true });
@@ -33,8 +44,6 @@ const loadMessages = (): ChatMessages[] => {
 const saveMessages = (msgs: ChatMessages[]): void => {
     writeFileSync(MESSAGES_FILE, JSON.stringify(msgs, null, 2));
 };
-
-type ToolHandler = (args: Record<string, string>) => Promise<string> | string;
 
 const TOOL_MAPPING: Record<string, ToolHandler> = {
     list_directory: ({ path }) => listDirectory(path),
@@ -69,7 +78,7 @@ while (true) {
     const reader = stream.getReader();
 
     let fullContent = "";
-    const toolCallsMap: Record<number, { id: string; name: string; arguments: string }> = {};
+    const toolCallsMap: TookCallsMap = {};
 
     while (true) {
         const { done, value: chunk } = await reader.read();
@@ -113,7 +122,6 @@ while (true) {
 
     for (const tc of toolCalls) {
         const handler = TOOL_MAPPING[tc.name];
-        // const args = JSON.parse(tc.arguments) as Record<string, string>;
         try {
             args = JSON.parse(tc.arguments);
         } catch {
@@ -140,3 +148,5 @@ while (true) {
 
     saveMessages(messages);
 }
+
+console.log(`\nSession saved: ${UUID}`);
