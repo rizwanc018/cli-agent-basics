@@ -1,5 +1,6 @@
 import type { EventStream } from "@openrouter/sdk/lib/event-streams.js";
 import type { ChatMessages, ChatStreamChunk } from "@openrouter/sdk/models";
+import { execSync } from "child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { basename, join } from "path";
@@ -8,10 +9,74 @@ import { randomUUID } from "crypto";
 import { maybeCompress } from "./lib/summerize.js";
 import { OpenRouter } from "@openrouter/sdk";
 import { TookCallsMap, ToolHandler } from "./lib/types.js";
-import { CheckpointManager } from "./lib/checkpointManager.js";
 
 export const client = new OpenRouter({ apiKey: process.env.OPENROUTER_API_KEY ?? "no-key" });
 
+// ─── Checkpoint Manager (git-based) ─────────────────────────────────────────
+//
+// Uses git instead of manual file copies:
+//
+//   create(reason)   → git add -A && git commit -m "agent-checkpoint: <reason>"
+//   list()           → git log filtered to agent-checkpoint commits
+//   restore(hash)    → git checkout <hash> -- .  (restores files, keeps history)
+//
+// Usage:
+//   checkpoints.create("before edit_file src/foo.ts")  → returns short hash
+//   checkpoints.list()                                  → array of { hash, message }
+//   checkpoints.restore("abc1234")                      → restores files to that state
+
+function gitRun(cmd: string): string {
+    return execSync(cmd, {
+        encoding: "utf-8",
+        cwd: process.cwd(),
+        stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+}
+
+class CheckpointManager {
+    // Commit current state as a checkpoint. Returns the short hash, or null if
+    // git is unavailable or there is nothing to commit.
+    create(reason: string): string | null {
+        try {
+            const status = gitRun("git status --porcelain");
+            if (status) {
+                gitRun("git add -A");
+                gitRun(`git commit -m "agent-checkpoint: ${reason}"`);
+            }
+            return gitRun("git rev-parse --short HEAD");
+        } catch (err: any) {
+            process.stderr.write(`[checkpoint] git error: ${err.message}\n`);
+            return null;
+        }
+    }
+
+    // List all agent-checkpoint commits, newest first.
+    list(): Array<{ hash: string; message: string; date: string }> {
+        try {
+            const out = gitRun(
+                `git log --format="%h|%s|%ci" --grep="^agent-checkpoint:"`
+            );
+            if (!out) return [];
+            return out.split("\n").map((line) => {
+                const [hash, message, date] = line.split("|");
+                return { hash: hash.trim(), message: message.trim(), date: date.trim() };
+            });
+        } catch {
+            return [];
+        }
+    }
+
+    // Restore files to a checkpoint without removing subsequent commits.
+    // Equivalent to: git checkout <hash> -- .
+    restore(hash: string): string {
+        try {
+            gitRun(`git checkout ${hash} -- .`);
+            return `Restored files to checkpoint ${hash}`;
+        } catch (err: any) {
+            return `Failed to restore ${hash}: ${err.stderr || err.message}`;
+        }
+    }
+}
 
 // ─── Session + Checkpoint dirs ───────────────────────────────────────────────
 
@@ -20,19 +85,19 @@ const args = process.argv.slice(2);
 // Handle --restore [id] before anything else
 const restoreIndex = args.indexOf("--restore");
 if (restoreIndex !== -1) {
-    const MESSAGES_DIR = join(homedir(), ".cli-agent-basics", basename(process.cwd()));
-    const checkpoints = new CheckpointManager(MESSAGES_DIR);
+    const checkpoints = new CheckpointManager();
     const targetId = args[restoreIndex + 1];
 
     if (!targetId) {
+        // No id given → list all checkpoints so user can pick one
         const all = checkpoints.list();
         if (all.length === 0) {
             console.log("No checkpoints found.");
         } else {
             console.log("Available checkpoints:\n");
             for (const cp of all) {
-                console.log(`  ${cp.id}  ${cp.timestamp}`);
-                console.log(`  ${cp.reason}  →  ${cp.originalPath}`);
+                console.log(`  ${cp.hash}  ${cp.date}`);
+                console.log(`  ${cp.message}`);
                 console.log();
             }
         }
@@ -57,7 +122,7 @@ const MESSAGES_DIR = join(homedir(), ".cli-agent-basics", basename(process.cwd()
 const MESSAGES_FILE = join(MESSAGES_DIR, `${UUID}.json`);
 mkdirSync(MESSAGES_DIR, { recursive: true });
 
-const checkpoints = new CheckpointManager(MESSAGES_DIR);
+const checkpoints = new CheckpointManager();
 
 // ─── Session load / save ─────────────────────────────────────────────────────
 
@@ -87,14 +152,14 @@ const TOOL_MAPPING: Record<string, ToolHandler> = {
 
     // Checkpoint BEFORE writing – write_file can overwrite an existing file
     write_file: ({ path, content }) => {
-        const id = checkpoints.create(path, `before write_file: ${path}`);
+        const id = checkpoints.create(`before write_file: ${path}`);
         if (id) process.stderr.write(`\n[checkpoint ${id}] saved ${path}\n`);
         return writeFile(path, content);
     },
 
     // Checkpoint BEFORE editing – this is the most common destructive call
     edit_file: async ({ path, diff }) => {
-        const id = checkpoints.create(path, `before edit_file: ${path}`);
+        const id = checkpoints.create(`before edit_file: ${path}`);
         if (id) process.stderr.write(`\n[checkpoint ${id}] saved ${path}\n`);
         return editFile(path, diff);
     },
